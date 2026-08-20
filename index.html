@@ -131,7 +131,7 @@
 
   ul.itens{list-style:none;margin:0;padding:0;}
   ul.itens li{
-    display:grid;grid-template-columns:22px 1fr auto;align-items:center;gap:10px;
+    display:grid;grid-template-columns:112px 1fr auto;align-items:center;gap:10px;
     padding:9px 4px;border-bottom:1px dashed var(--line);font-size:13.5px;
   }
   ul.itens li:last-child{border-bottom:none;}
@@ -142,7 +142,20 @@
   }
   ul.itens li .obs:focus{outline:none;border-bottom-color:var(--accent);}
   ul.itens li.done span.texto{color:var(--ok);}
+  ul.itens li.na span.texto{color:var(--ink-soft);text-decoration:line-through;text-decoration-color:#555;}
   ul.itens li .obs::placeholder{color:#4d4d52;}
+
+  .ok-na-grupo{display:flex;gap:5px;}
+  .ok-na-btn{
+    display:inline-flex;align-items:center;justify-content:center;
+    border:1px solid var(--line);border-radius:4px;
+    padding:4px 9px;font-size:10.5px;font-weight:600;letter-spacing:.3px;
+    cursor:pointer;color:var(--ink-soft);user-select:none;transition:all .15s;
+  }
+  .ok-na-btn input{display:none;}
+  .ok-na-btn.ok.selecionado{background:var(--ok);border-color:var(--ok);color:#fff;}
+  .ok-na-btn.na.selecionado{background:#3a3a3e;border-color:#5a5a5e;color:#fff;}
+  .ok-na-btn:hover{border-color:var(--accent);}
 
   .campo-condicional{
     display:none;grid-template-columns:1fr 1fr;gap:12px;
@@ -245,12 +258,15 @@
     header{background:none;}
     * {color:#000 !important;}
     .campo-condicional{background:none;border:1px solid #ccc;}
+    .ok-na-btn{border:1px solid #999 !important;background:#fff !important;color:#000 !important;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .ok-na-btn.ok.selecionado{background:#e6e6e6 !important;border:2px solid #000 !important;font-weight:800;}
+    .ok-na-btn.na.selecionado{background:#e6e6e6 !important;border:2px solid #000 !important;font-weight:800;text-decoration:line-through;}
   }
 
   @media (max-width:640px){
     .campos{grid-template-columns:1fr;}
     .assinaturas{grid-template-columns:1fr;}
-    ul.itens li{grid-template-columns:22px 1fr;}
+    ul.itens li{grid-template-columns:112px 1fr;}
     ul.itens li .obs{grid-column:1/-1;justify-self:stretch;width:100%;margin-top:4px;}
     .campo-condicional{grid-template-columns:1fr;}
     .step-pill{min-width:56px;font-size:9.5px;}
@@ -388,6 +404,7 @@
         </div>
         <ul class="itens">
           <li><input type="checkbox"><span class="texto">Acesso a pastas/compartilhamentos do setor</span><input class="obs" placeholder="obs"></li>
+          <li><input type="checkbox"><span class="texto">Acesso ao RD Conversas</span><input class="obs" placeholder="obs"></li>
           <li><input type="checkbox" id="chk-sistema-esp"><span class="texto">Sistema específico do cargo</span><span></span></li>
         </ul>
         <div class="campo-condicional" id="cond-sistema-esp">
@@ -677,13 +694,35 @@
     }
   });
 
-  function ligarCondicional(idCheckbox, idBloco){
-    const chk = document.getElementById(idCheckbox);
+  // ---- transforma cada checkbox de item em um par de botões OK / N/A ----
+  function transformarItensOkNA(){
+    let contador = 0;
+    document.querySelectorAll('ul.itens li').forEach(li=>{
+      const cb = li.querySelector('input[type=checkbox]');
+      if(!cb) return;
+      contador++;
+      const nomeGrupo = cb.id ? cb.id : ('item_'+contador);
+      const grupo = document.createElement('span');
+      grupo.className = 'ok-na-grupo';
+      grupo.innerHTML =
+        '<label class="ok-na-btn ok"><input type="radio" name="'+nomeGrupo+'" value="ok"><span>OK</span></label>'+
+        '<label class="ok-na-btn na"><input type="radio" name="'+nomeGrupo+'" value="na"><span>N/A</span></label>';
+      li.insertBefore(grupo, cb);
+      li.removeChild(cb);
+    });
+  }
+  transformarItensOkNA();
+
+  function ligarCondicional(nomeGrupo, idBloco){
+    const radios = document.querySelectorAll('input[name="'+nomeGrupo+'"]');
     const bloco = document.getElementById(idBloco);
-    if(!chk || !bloco) return;
-    chk.addEventListener('change', ()=>{
-      bloco.classList.toggle('visivel', chk.checked);
-      atualizarProgresso();
+    if(!radios.length || !bloco) return;
+    radios.forEach(r=>{
+      r.addEventListener('change', ()=>{
+        const okRadio = document.querySelector('input[name="'+nomeGrupo+'"][value="ok"]');
+        bloco.classList.toggle('visivel', okRadio.checked);
+        atualizarProgresso();
+      });
     });
   }
   ligarCondicional('chk-vpn','cond-vpn');
@@ -705,33 +744,41 @@
     });
   });
 
-  function itemVisivel(cb){
-    const li = cb.closest('li');
+  function itemVisivelLi(li){
     if(li.classList.contains('item-setor') && !li.classList.contains('visivel-setor')) return false;
     return true;
   }
+  function itemRespondido(li){
+    const ok = li.querySelector('.ok-na-grupo input[value="ok"]');
+    const na = li.querySelector('.ok-na-grupo input[value="na"]');
+    return (ok && ok.checked) || (na && na.checked);
+  }
 
   function atualizarProgresso(){
-    const todas = Array.from(document.querySelectorAll('ul.itens input[type=checkbox]')).filter(itemVisivel);
-    const marcadas = todas.filter(cb=>cb.checked);
-    const total = todas.length;
-    const feitas = marcadas.length;
+    const itensVisiveis = Array.from(document.querySelectorAll('ul.itens li')).filter(itemVisivelLi);
+    const total = itensVisiveis.length;
+    const feitas = itensVisiveis.filter(itemRespondido).length;
     const pct = total ? Math.round((feitas/total)*100) : 0;
     document.getElementById('barraFill').style.width = pct + '%';
-    document.getElementById('progressoTexto').textContent = feitas + ' de ' + total + ' itens concluídos (' + pct + '%)';
+    document.getElementById('progressoTexto').textContent = feitas + ' de ' + total + ' itens respondidos (' + pct + '%)';
 
     secoes.forEach((sec,i)=>{
-      const itens = Array.from(sec.querySelectorAll('ul.itens input[type=checkbox]')).filter(itemVisivel);
-      const feitosSec = itens.filter(cb=>cb.checked).length;
+      const itens = Array.from(sec.querySelectorAll('ul.itens li')).filter(itemVisivelLi);
+      const feitosSec = itens.filter(itemRespondido).length;
       const pill = document.querySelector('.step-pill[data-idx="'+i+'"]');
       if(pill) pill.classList.toggle('completo', itens.length>0 && feitosSec===itens.length);
     });
     return pct;
   }
 
-  document.querySelectorAll('ul.itens input[type=checkbox]').forEach(cb=>{
-    cb.addEventListener('change', ()=>{
-      cb.closest('li').classList.toggle('done', cb.checked);
+  document.querySelectorAll('ul.itens li .ok-na-grupo input[type=radio]').forEach(r=>{
+    r.addEventListener('change', ()=>{
+      const li = r.closest('li');
+      li.classList.toggle('done', r.value==='ok' && r.checked);
+      li.classList.toggle('na', r.value==='na' && r.checked);
+      const grupo = r.closest('.ok-na-grupo');
+      grupo.querySelectorAll('.ok-na-btn').forEach(b=>b.classList.remove('selecionado'));
+      r.closest('.ok-na-btn').classList.add('selecionado');
       atualizarProgresso();
     });
   });
@@ -786,9 +833,6 @@
       }
     });
     document.getElementById('campoSetor').dispatchEvent(new Event('change'));
-    document.querySelectorAll('#formRoot input[type=checkbox]').forEach(cb=>{
-      cb.dispatchEvent(new Event('change'));
-    });
     document.querySelectorAll('#formRoot input[type=radio]:checked').forEach(r=>{
       r.dispatchEvent(new Event('change'));
     });
@@ -881,11 +925,12 @@
 
   function novoChecklist(){
     if(!confirm('Iniciar um novo checklist? Os campos serão limpos (o que já foi salvo continua no banco de dados).')) return;
-    document.querySelectorAll('#formRoot input[type=checkbox]').forEach(cb=>{cb.checked=false; cb.dispatchEvent(new Event('change'));});
     document.querySelectorAll('#formRoot input[type=radio]').forEach(r=>{r.checked=false;});
     document.querySelectorAll('#formRoot input[type=text], #formRoot input[type=date]').forEach(i=>i.value='');
     document.querySelectorAll('.campo-condicional').forEach(b=>b.classList.remove('visivel'));
-    const ta = document.querySelector('#formRoot textarea'); if(ta) ta.value='';
+    document.querySelectorAll('#formRoot textarea').forEach(ta=> ta.value='');
+    document.querySelectorAll('ul.itens li').forEach(li=> li.classList.remove('done','na'));
+    document.querySelectorAll('.ok-na-btn').forEach(b=> b.classList.remove('selecionado'));
     campoSetorEl.value = '';
     atualizarSetor();
     currentId = null;
