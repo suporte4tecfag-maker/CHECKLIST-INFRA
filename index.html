@@ -276,7 +276,7 @@
 <body>
 
 <div class="toolbar">
-  <button onclick="abrirBanco()">🗄️ Banco de dados</button>
+  <button onclick="abrirBanco()">📊 Banco de dados (Sheets)</button>
   <button onclick="novoChecklist()">＋ Novo checklist</button>
   <button onclick="salvarNoBanco()">💾 Salvar</button>
   <button class="primario" onclick="window.print()">🖨️ Imprimir / PDF</button>
@@ -648,7 +648,7 @@
 <div class="overlay" id="overlayBanco">
   <div class="modal">
     <header>
-      <h3>🗄️ Banco de dados local — checklists salvos</h3>
+      <h3>📊 Banco de dados (Google Sheets) — checklists salvos</h3>
       <button onclick="fecharBanco()">✕</button>
     </header>
     <div class="modal-body" id="listaBanco"></div>
@@ -662,7 +662,6 @@
   const secoes = document.querySelectorAll('.secao');
   let passoAtual = 0;
   let currentId = null;
-  const DB_KEY = 'tecfag_infra_checklists';
 
   const stepperEl = document.getElementById('stepper');
   nomesEtapas.forEach((nome,i)=>{
@@ -839,17 +838,55 @@
     atualizarProgresso();
   }
 
-  function getDB(){
-    try{ return JSON.parse(localStorage.getItem(DB_KEY)) || []; }catch(e){ return []; }
-  }
-  function setDB(db){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
+  // ==== Backend: Google Sheets via Apps Script ====
+  // 1) Publique o apps-script-backend.gs como Web App (veja instruções no arquivo).
+  // 2) Cole a URL gerada (termina com /exec) abaixo.
+  // 3) Use o MESMO valor de TOKEN definido no Apps Script.
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwEqlp8UpfI1v3e08SYMgxlfUaNWFYiY9--EzBDAoXAe-_FWQRxwnDsXvp37LHdnziIcg/exec'; // ex: https://script.google.com/macros/s/AKfycb.../exec
+  const SHEETS_TOKEN = 'TECFAG2026';
 
-  function salvarNoBanco(silencioso){
+  function backendConfigurado(){
+    return APPS_SCRIPT_URL && APPS_SCRIPT_URL.indexOf('COLE_AQUI') === -1;
+  }
+
+  async function apiList(){
+    const url = APPS_SCRIPT_URL + '?action=list&token=' + encodeURIComponent(SHEETS_TOKEN);
+    const res = await fetch(url);
+    const json = await res.json();
+    if(!json.ok) throw new Error(json.error || 'Falha ao listar');
+    return json.registros;
+  }
+  async function apiSave(record){
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'}, // evita preflight CORS no Apps Script
+      body: JSON.stringify({ action:'save', token:SHEETS_TOKEN, record })
+    });
+    const json = await res.json();
+    if(!json.ok) throw new Error(json.error || 'Falha ao salvar');
+  }
+  async function apiDelete(id){
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      headers: {'Content-Type': 'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'delete', token:SHEETS_TOKEN, id })
+    });
+    const json = await res.json();
+    if(!json.ok) throw new Error(json.error || 'Falha ao excluir');
+  }
+
+  let bancoCache = [];
+
+  async function salvarNoBanco(silencioso){
     const nome = document.getElementById('campoNome').value.trim();
     if(!nome){
       alert('Preencha o nome do colaborador antes de salvar.');
       irPara(0);
       document.getElementById('campoNome').focus();
+      return;
+    }
+    if(!backendConfigurado()){
+      alert('O backend do Google Sheets ainda não foi configurado. Veja as instruções no README.');
       return;
     }
     const rec = {
@@ -862,33 +899,43 @@
       savedAt: new Date().toISOString(),
       formData: serializeForm()
     };
-    let db = getDB();
-    const idx = db.findIndex(r=>r.id===rec.id);
-    if(idx>=0) db[idx]=rec; else db.unshift(rec);
-    setDB(db);
-    currentId = rec.id;
-    renderBanco();
-    if(!silencioso) alert('Checklist salvo no banco de dados local deste navegador.');
-    else alert('Checklist finalizado e salvo no banco de dados local (' + rec.progresso + '% concluído).');
+    try{
+      await apiSave(rec);
+      currentId = rec.id;
+      if(!silencioso) alert('Checklist salvo na planilha do Google Sheets.');
+      else alert('Checklist finalizado e salvo na planilha (' + rec.progresso + '% concluído).');
+    }catch(err){
+      alert('Não foi possível salvar na planilha: ' + err.message);
+    }
   }
 
-  function abrirBanco(){
-    renderBanco();
+  async function abrirBanco(){
     document.getElementById('overlayBanco').classList.add('aberto');
+    const el = document.getElementById('listaBanco');
+    if(!backendConfigurado()){
+      el.innerHTML = '<div class="vazio">Backend do Google Sheets ainda não configurado. Veja o README do repositório.</div>';
+      return;
+    }
+    el.innerHTML = '<div class="vazio">Carregando...</div>';
+    try{
+      bancoCache = await apiList();
+      renderBanco();
+    }catch(err){
+      el.innerHTML = '<div class="vazio">Erro ao carregar a planilha: ' + escapeHtml(err.message) + '</div>';
+    }
   }
   function fecharBanco(){
     document.getElementById('overlayBanco').classList.remove('aberto');
   }
 
   function renderBanco(){
-    const db = getDB();
     const el = document.getElementById('listaBanco');
-    if(db.length===0){
+    if(bancoCache.length===0){
       el.innerHTML = '<div class="vazio">Nenhum checklist salvo ainda. Preencha e clique em "Salvar".</div>';
       return;
     }
-    el.innerHTML = db.map(r=>{
-      const dataSalvo = new Date(r.savedAt).toLocaleString('pt-BR');
+    el.innerHTML = bancoCache.map(r=>{
+      const dataSalvo = r.savedAt ? new Date(r.savedAt).toLocaleString('pt-BR') : '';
       const sub = [r.cargo, r.setor].filter(Boolean).join(' · ');
       return '<div class="registro">'+
         '<div class="registro-info"><b>'+escapeHtml(r.nome)+'</b>'+
@@ -907,8 +954,7 @@
   }
 
   function abrirRegistro(id){
-    const db = getDB();
-    const rec = db.find(r=>r.id===id);
+    const rec = bancoCache.find(r=>r.id===id);
     if(!rec) return;
     applyForm(rec.formData);
     currentId = rec.id;
@@ -916,12 +962,17 @@
     irPara(0);
   }
 
-  function excluirRegistro(id){
-    if(!confirm('Excluir este checklist do banco de dados local?')) return;
-    let db = getDB().filter(r=>r.id!==id);
-    setDB(db);
-    renderBanco();
+  async function excluirRegistro(id){
+    if(!confirm('Excluir este checklist da planilha do Google Sheets?')) return;
+    try{
+      await apiDelete(id);
+      bancoCache = bancoCache.filter(r=>r.id!==id);
+      renderBanco();
+    }catch(err){
+      alert('Não foi possível excluir: ' + err.message);
+    }
   }
+
 
   function novoChecklist(){
     if(!confirm('Iniciar um novo checklist? Os campos serão limpos (o que já foi salvo continua no banco de dados).')) return;
